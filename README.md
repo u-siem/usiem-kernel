@@ -3,7 +3,21 @@ A basic kernel to be used in uSIEM
 
 The kernel is responsible for interconnecting the components, scaling the components to absorb the load, and routing messages and commands between them. 
 
-This image shows how it works.
+
+## Metrics
+
+This kernels allows the usage of prometheus metrics:
+
+```rust
+let encoder = prometheus::TextEncoder::new();
+let mut buffer = Vec::new();
+if let Err(e) = encoder.encode(&(usiem_kernel::REGISTRY).gather(), &mut buffer) {
+    eprintln!("could not encode custom metrics: {}", e);
+};
+```
+
+## InnerWorkings
+
 ![](./images/KernelInnerWorkings.png)
 
 The kernel has a list of components already configured that it will use to instantiate and run in new threads.
