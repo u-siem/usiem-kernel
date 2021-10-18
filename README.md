@@ -14,6 +14,8 @@ let component2 : SiemComponent = ParserComponent1::new(param1,param2);
 let mut kernel = SiemBasicKernel::new(1000, 4, 5000);
 kernel.register_input_component(component1);
 kernel.register_parser_component(component2);
+...
+kernel.run()
 ```
 
 Input components will receive logs (syslog, elastic like, from file...) and add them to the parsing queue.
