@@ -8,11 +8,15 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
 use usiem::components::common::{
-    SiemComponentStateStorage, SiemFunctionCall, SiemMessage, SiemTaskType,
+    SiemComponentStateStorage, SiemFunctionCall, SiemMessage,
 };
 use usiem::components::dataset::SiemDataset;
 use usiem::components::{SiemComponent, SiemDatasetManager};
 use usiem::events::SiemLog;
+
+#[cfg(test)]
+mod test_comp;
+
 const COMMAND_RESPONSE_LABEL: &'static str = "command";
 const TASK_RESPONSE_LABEL: &'static str = "task";
 
@@ -687,17 +691,19 @@ impl SiemBasicKernel {
                 match self.own_channel.0.try_recv() {
                     Ok(msg) => {
                         let mut for_kernel = false;
-                        let mut for_component = 0;
                         match &msg {
                             SiemMessage::Command(comp_id, call) => {
-                                for_component = *comp_id;
+                                let for_component = *comp_id;
                                 match call {
                                     SiemFunctionCall::START_COMPONENT(_comp_name) => {
                                         for_kernel = true;
                                         //TODO
                                     }
-                                    SiemFunctionCall::STOP_COMPONENT(_comp_name) => {
+                                    SiemFunctionCall::STOP_COMPONENT(comp_name) => {
                                         for_kernel = true;
+                                        if comp_name == "KERNEL" {
+                                            return
+                                        }
                                         //TODO
                                     }
                                     SiemFunctionCall::OTHER(name, _params) => {
@@ -795,7 +801,7 @@ impl SiemBasicKernel {
                                 }
                             }
                             SiemMessage::Alert(_alert) => {}
-                            SiemMessage::Notification(comp_id, _notification) => {}
+                            SiemMessage::Notification(_comp_id, _notification) => {}
                             SiemMessage::Task(comp_id, task) => {
                                 match self.get_components_for_task(&task.origin) {
                                     Some(v) => {
@@ -882,8 +888,34 @@ fn select_random_id(id: usize, vc: &Vec<u64>) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::test_comp::{BasicComponent, BasicDatasetManager};
+
     #[test]
     fn test_kernel_instance() {
         let mut kernel = SiemBasicKernel::new(1000, 4, 5000);
+        let comp = BasicComponent::new();
+        let dm = BasicDatasetManager::new();
+        let ic = BasicComponent::new();
+        let pc = BasicComponent::new();
+        let ec = BasicComponent::new();
+        let oc = BasicComponent::new();
+        let re = BasicComponent::new();
+        kernel.register_other_component(Box::new(comp));
+        kernel.register_dataset_manager(Box::new(dm));
+        kernel.register_input_component(Box::new(ic));
+        kernel.register_output_component(Box::new(oc));
+        kernel.register_parser_component(Box::new(pc));
+        kernel.register_rule_engine_component(Box::new(re));
+        kernel.register_enchancer_component(Box::new(ec));
+        let sender = kernel.own_channel.1.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            // STOP parser component to finish testing
+            let _r = sender.send(SiemMessage::Command(
+                0,
+                SiemFunctionCall::STOP_COMPONENT(Cow::Borrowed("KERNEL")),
+            ));
+        });
+        kernel.run();
     }
 }
