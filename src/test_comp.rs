@@ -1,8 +1,8 @@
 use crossbeam_channel::{Receiver, Sender};
 use usiem::components::common::{
-    SiemComponentCapabilities, SiemComponentStateStorage, SiemMessage,
+    SiemComponentCapabilities, SiemComponentStateStorage, SiemMessage
 };
-use usiem::components::dataset::SiemDataset;
+use usiem::components::dataset::{SiemDataset, SiemDatasetType};
 use usiem::components::{SiemComponent, SiemDatasetManager};
 use usiem::events::SiemLog;
 use std::borrow::Cow;
@@ -131,4 +131,5 @@ impl SiemDatasetManager for BasicDatasetManager {
     fn duplicate(&self) -> Box<dyn SiemDatasetManager> {
         return Box::new(self.clone());
     }
+    fn register_dataset(&mut self, _dataset : SiemDatasetType) {}
 }

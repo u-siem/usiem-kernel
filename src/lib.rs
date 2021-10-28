@@ -233,11 +233,14 @@ impl SiemBasicKernel {
         }
         let thread_join = thread::spawn(move || {
             component.run();
+            let mut params = BTreeMap::new();
+            params.insert(Cow::Borrowed("component_id"), Cow::Owned(component_id.to_string()));
             let _e = kernel_channel.send(SiemMessage::Command(
                 component_id,
+                0,
                 SiemFunctionCall::OTHER(
                     Cow::Borrowed("COMPONENT_FINISHED"),
-                    json!({ "component_id": component_id }),
+                    params
                 ),
             ));
         });
@@ -346,7 +349,7 @@ impl SiemBasicKernel {
         let mut component_map: BTreeMap<String, Vec<u64>> = BTreeMap::new();
         let mut component_reverse_map: BTreeMap<u64, String> = BTreeMap::new();
         // ID = (Comp_ID, Timestamp)
-        let mut command_response_track: BTreeMap<u64, (u64, i64)> = BTreeMap::new();
+        let mut command_response_track: BTreeMap<u64, (u64,u64, i64)> = BTreeMap::new();
         // ID = (Comp_ID, Timestamp)
         let mut task_response_track: BTreeMap<u64, (u64, i64)> = BTreeMap::new();
         let mut running_parsers = Vec::new();
@@ -692,7 +695,7 @@ impl SiemBasicKernel {
                     Ok(msg) => {
                         let mut for_kernel = false;
                         match &msg {
-                            SiemMessage::Command(comp_id, call) => {
+                            SiemMessage::Command(comp_id,comm_id, call) => {
                                 let for_component = *comp_id;
                                 match call {
                                     SiemFunctionCall::START_COMPONENT(_comp_name) => {
@@ -745,7 +748,7 @@ impl SiemBasicKernel {
                                             command_id_gen += 1;
                                             command_response_track.insert(
                                                 command_id_gen,
-                                                (*comp_id, chrono::Utc::now().timestamp_millis()),
+                                                (*comp_id, *comm_id, chrono::Utc::now().timestamp_millis()),
                                             );
                                             for cmp in v {
                                                 match component_map.get(cmp) {
@@ -758,6 +761,7 @@ impl SiemBasicKernel {
                                                             Some((_, channel)) => {
                                                                 let _r = channel.send(
                                                                     SiemMessage::Command(
+                                                                        for_component,
                                                                         command_id_gen,
                                                                         call.clone(),
                                                                     ),
@@ -776,7 +780,7 @@ impl SiemBasicKernel {
                             }
                             SiemMessage::Response(resp_id, response) => {
                                 match command_response_track.get(resp_id) {
-                                    Some((comp_id, timestamp)) => {
+                                    Some((comp_id,comm_id, timestamp)) => {
                                         let timestamp_now = chrono::Utc::now().timestamp_millis();
                                         MESSAGE_RESPONSE_TIME
                                             .with_label_values(&[COMMAND_RESPONSE_LABEL])
@@ -789,7 +793,7 @@ impl SiemBasicKernel {
                                             match thread_map.get(comp_id) {
                                                 Some((_, channel)) => {
                                                     let _r = channel.send(SiemMessage::Response(
-                                                        *resp_id,
+                                                        *comm_id, // Replace the response ID with the original command ID
                                                         response.clone(),
                                                     ));
                                                 }
@@ -912,6 +916,7 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(300));
             // STOP parser component to finish testing
             let _r = sender.send(SiemMessage::Command(
+                0,
                 0,
                 SiemFunctionCall::STOP_COMPONENT(Cow::Borrowed("KERNEL")),
             ));
