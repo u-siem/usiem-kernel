@@ -8,18 +8,17 @@ use usiem::events::SiemLog;
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
 use std::collections::BTreeMap;
+use std::vec;
 use lazy_static::lazy_static;
 
 lazy_static! {
-    static ref DATASETS : Arc<Mutex<Vec<SiemDataset>>> = Arc::new(Mutex::new(Vec::new()));
+    static ref DATASETS : Arc<Mutex<BTreeMap<SiemDatasetType,SiemDataset>>> = Arc::new(Mutex::new(BTreeMap::new()));
 }
 
 #[derive(Clone)]
 pub struct BasicComponent {
     /// Send actions to the kernel
     kernel_sender: Sender<SiemMessage>,
-    /// Receive actions from other components or the kernel
-    local_chnl_rcv: Receiver<SiemMessage>,
     /// Send actions to this components
     local_chnl_snd: Sender<SiemMessage>,
     /// Receive logs
@@ -30,11 +29,10 @@ pub struct BasicComponent {
 impl BasicComponent {
     pub fn new() -> BasicComponent {
         let (kernel_sender, _receiver) = crossbeam_channel::bounded(1000);
-        let (local_chnl_snd, local_chnl_rcv) = crossbeam_channel::unbounded();
+        let (local_chnl_snd, _local_chnl_rcv) = crossbeam_channel::unbounded();
         let (log_sender, log_receiver) = crossbeam_channel::unbounded();
         return BasicComponent {
             kernel_sender,
-            local_chnl_rcv,
             local_chnl_snd,
             log_receiver,
             log_sender,
@@ -50,8 +48,8 @@ impl SiemComponent for BasicComponent {
     fn set_id(&mut self, id: u64) {
         self.id = id;
     }
-    fn name(&self) -> Cow<'static, str> {
-        Cow::Borrowed("BasicParser")
+    fn name(&self) -> &str {
+        "BasicParser"
     }
     fn local_channel(&self) -> Sender<SiemMessage> {
         self.local_chnl_snd.clone()
@@ -79,6 +77,7 @@ impl SiemComponent for BasicComponent {
             vec![],
             vec![],
             vec![],
+            vec![]
         )
     }
 }
@@ -87,33 +86,24 @@ impl SiemComponent for BasicComponent {
 pub struct BasicDatasetManager {
     /// Send actions to the kernel
     kernel_sender: Sender<SiemMessage>,
-    /// Receive actions from other components or the kernel
-    local_chnl_rcv: Receiver<SiemMessage>,
     /// Send actions to this components
     local_chnl_snd: Sender<SiemMessage>,
-    /// Receive logs
-    log_receiver: Receiver<SiemLog>,
-    log_sender: Sender<SiemLog>
 }
 impl BasicDatasetManager {
     pub fn new() -> BasicDatasetManager {
         let (kernel_sender, _receiver) = crossbeam_channel::bounded(1000);
-        let (local_chnl_snd, local_chnl_rcv) = crossbeam_channel::unbounded();
-        let (log_sender, log_receiver) = crossbeam_channel::unbounded();
+        let (local_chnl_snd, _local_chnl_rcv) = crossbeam_channel::unbounded();
         return BasicDatasetManager {
             kernel_sender,
-            local_chnl_rcv,
-            local_chnl_snd,
-            log_receiver,
-            log_sender,
+            local_chnl_snd
         };
     }
 }
 
 impl SiemDatasetManager for BasicDatasetManager {
 
-    fn name(&self) -> Cow<'static, str> {
-        Cow::Borrowed("BasicParser")
+    fn name(&self) -> &str {
+        "BasicDatasetManager"
     }
     fn local_channel(&self) -> Sender<SiemMessage> {
         self.local_chnl_snd.clone()
@@ -122,14 +112,11 @@ impl SiemDatasetManager for BasicDatasetManager {
         self.kernel_sender = sender;
     }
     fn run(&mut self) {}
-    fn get_datasets(&self) -> Arc<Mutex<Vec<SiemDataset>>> {
+    fn get_datasets(&self) ->  Arc<Mutex<BTreeMap<SiemDatasetType,SiemDataset>>> {
         return Arc::clone(&DATASETS);
     }
-    fn set_dataset_channels(&mut self, _channels : Arc<Mutex<BTreeMap<String,Vec<Sender<SiemMessage>>>>>) {
+    fn set_dataset_channels(&mut self, _channels : Arc<Mutex<BTreeMap<SiemDatasetType,Vec<Sender<SiemMessage>>>>>) {
 
-    }
-    fn duplicate(&self) -> Box<dyn SiemDatasetManager> {
-        return Box::new(self.clone());
     }
     fn register_dataset(&mut self, _dataset : SiemDatasetType) {}
 }

@@ -1,6 +1,6 @@
 [package]
 name = "u-siem-kernel"
-version = "0.0.4"
+version = "0.0.5"
 authors = ["Samuel Garcés <samuel.garces@protonmail.com>"]
 license = "MIT"
 description = "Library to be used to build a custom SIEM with the framework uSIEM"
@@ -14,6 +14,7 @@ name = "usiem_kernel"
 path = "src/lib.rs"
 
 [features]
+default = ["metrics"]
 metrics = []
 
 [dependencies]
@@ -21,6 +22,5 @@ serde = { version = "1.0", features = ["derive"] }
 u-siem = { version = "0.0" }
 chrono = "0.4"
 crossbeam-channel = { version = "0.5"}
-serde_json = "1.0"
 prometheus = "0.13"
 lazy_static = "1.4"

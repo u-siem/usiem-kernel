@@ -34,7 +34,7 @@ kernel.run()
 
 Input components will receive logs (syslog, elastic like, from file...) and add them to the parsing queue.
 Parsing components will process the logs adding fields and the log type in the form of a `SiemEvent` (Firewall, DHCP, DNS...).
-Enchancer components will extract usefull information to enrich other types of logs or in rules. This information will be stored in Datasets that are dynamically populated. 
+enricher components will extract usefull information to enrich other types of logs or in rules. This information will be stored in Datasets that are dynamically populated. 
 
 The datasets are shared across all threads without the need for a Mutex. This is achived using `crossbeam_channels`, the component will receive on its local channel updates of the datasets it needs directly from the DatasetManager component, and it will also be able to submit Updates using the channel of this DatasetManager.
 

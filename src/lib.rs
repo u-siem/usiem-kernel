@@ -1,104 +1,71 @@
 use crossbeam_channel::{Receiver, Sender, TryRecvError};
 use lazy_static::lazy_static;
+use std::sync::atomic::AtomicI64;
 use prometheus::{self, HistogramOpts, HistogramVec, IntGauge, Registry};
-use serde_json::json;
+use usiem::components::metrics::{SiemMetricDefinition, SiemMetric};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
 use usiem::components::common::{
-    SiemComponentStateStorage, SiemFunctionCall, SiemMessage,
+    SiemComponentStateStorage, SiemMessage,
 };
-use usiem::components::dataset::SiemDataset;
+use usiem::components::command::{SiemCommandCall, SiemCommandHeader};
+use usiem::components::dataset::{SiemDataset, SiemDatasetType};
 use usiem::components::{SiemComponent, SiemDatasetManager};
 use usiem::events::SiemLog;
 
 #[cfg(test)]
 mod test_comp;
 
-const COMMAND_RESPONSE_LABEL: &'static str = "command";
-const TASK_RESPONSE_LABEL: &'static str = "task";
 
 lazy_static! {
-    // TODO: Use local variables for better performance
-    pub static ref REGISTRY: Registry = Registry::new();
-    pub static ref QUEUED_LOGS_PARSING: IntGauge =
-        IntGauge::new("queued_logs_parsing", "Number of logs in the parsing queue")
-            .expect("metric can be created");
-    pub static ref QUEUED_LOGS_ENCHANCING: IntGauge = IntGauge::new(
-        "queued_logs_enchancing",
-        "Number of logs in the enchancing queue"
-    )
-    .expect("metric can be created");
-    pub static ref QUEUED_LOGS_RULE_ENGINE: IntGauge = IntGauge::new(
-        "queued_logs_rule_engine",
-        "Number of logs in the rule engine queue"
-    )
-    .expect("metric can be created");
-    pub static ref QUEUED_LOGS_INDEXING: IntGauge = IntGauge::new(
-        "queued_logs_indexing",
-        "Number of logs in the indexing queue"
-    )
-    .expect("metric can be created");
-    pub static ref MESSAGES_FOR_KERNEL: IntGauge = IntGauge::new(
-        "messages_for_kernel",
-        "Number of messages that the kernel has in the queue"
-    )
-    .expect("metric can be created");
-    pub static ref MESSAGE_RESPONSE_TIME: HistogramVec = HistogramVec::new(
-        HistogramOpts::new("response_time", "Response Times"),
-        &["message"]
-    )
-    .expect("metric can be created");
-}
-
-#[cfg(feature = "metrics")]
-fn register_custom_metrics() {
-    REGISTRY
-        .register(Box::new(QUEUED_LOGS_PARSING.clone()))
-        .expect("collector can be registered");
-    REGISTRY
-        .register(Box::new(QUEUED_LOGS_ENCHANCING.clone()))
-        .expect("collector can be registered");
-    REGISTRY
-        .register(Box::new(QUEUED_LOGS_RULE_ENGINE.clone()))
-        .expect("collector can be registered");
-    REGISTRY
-        .register(Box::new(QUEUED_LOGS_INDEXING.clone()))
-        .expect("collector can be registered");
-    REGISTRY
-        .register(Box::new(MESSAGES_FOR_KERNEL.clone()))
-        .expect("collector can be registered");
-    REGISTRY
-        .register(Box::new(MESSAGE_RESPONSE_TIME.clone()))
-        .expect("collector can be registered");
+    pub static ref QUEUED_LOGS_PARSING : Arc<AtomicI64> = Arc::new(AtomicI64::new(0));
+    pub static ref QUEUED_LOGS_ENRICHMENT : Arc<AtomicI64> = Arc::new(AtomicI64::new(0));
+    pub static ref QUEUED_LOGS_RULE_ENGINE : Arc<AtomicI64> = Arc::new(AtomicI64::new(0));
+    pub static ref QUEUED_LOGS_INDEXING : Arc<AtomicI64> = Arc::new(AtomicI64::new(0));
+    pub static ref QUEUED_MESSAGES_FOR_KERNEL : Arc<AtomicI64> = Arc::new(AtomicI64::new(0));
+    pub static ref TOTAL_MESSAGES_PROCESSED : Arc<AtomicI64> = Arc::new(AtomicI64::new(0));
 }
 
 pub struct SiemBasicKernel {
     own_channel: (Receiver<SiemMessage>, Sender<SiemMessage>),
+    // Channels to be asigned to specific components
     parser_channel: (Receiver<SiemLog>, Sender<SiemLog>),
-    enchancer_channel: (Receiver<SiemLog>, Sender<SiemLog>),
+    enricher_channel: (Receiver<SiemLog>, Sender<SiemLog>),
     rule_engine_channel: (Receiver<SiemLog>, Sender<SiemLog>),
     output_channel: (Receiver<SiemLog>, Sender<SiemLog>),
+    /// Components that receive logs
     input_components: Vec<Box<dyn SiemComponent>>,
+    /// Other components not used in the log processing pipeline
     other_components: Vec<Box<dyn SiemComponent>>,
+    /// Components that does not need to be run
     norun_components: Vec<Box<dyn SiemComponent>>,
+    /// Component that parses logs
     parser_component: Option<Box<dyn SiemComponent>>,
+    /// Component that applies rules to the logs
     rule_engine_component: Option<Box<dyn SiemComponent>>,
-    enchancer_component: Option<Box<dyn SiemComponent>>,
+    /// Component that enriches logs with information extracted from datasets or updates the datasets
+    enricher_component: Option<Box<dyn SiemComponent>>,
+    /// Component that stores logs or querys them
     output_component: Option<Box<dyn SiemComponent>>,
+    /// Component responsible of managing the datasets
     dataset_manager: Option<Box<dyn SiemDatasetManager>>,
+    /// Component that allows to store or retrieve information
     state_storage: Option<Box<dyn SiemComponentStateStorage>>,
+    /// Alerting component
+    alert_component: Option<Box<dyn SiemComponent>>,
+    metrics : Vec<SiemMetricDefinition>,
     pub max_threads_parsing: u64,
     pub max_threads_enchancing: u64,
     pub max_threads_output: u64,
     pub max_threads_rule_engine: u64,
     pub command_response_timeout: i64,
     command_map: BTreeMap<String, Vec<String>>,
-    dataset_map: BTreeMap<String, Vec<String>>,
+    dataset_map: BTreeMap<SiemDatasetType, Vec<String>>,
     task_map: BTreeMap<String, Vec<String>>,
-    dataset_channels: Arc<Mutex<BTreeMap<String, Vec<Sender<SiemMessage>>>>>,
+    dataset_channels: Arc<Mutex<BTreeMap<SiemDatasetType, Vec<Sender<SiemMessage>>>>>,
 }
 
 impl SiemBasicKernel {
@@ -108,10 +75,49 @@ impl SiemBasicKernel {
         let (es, er) = crossbeam_channel::bounded(queue_size);
         let (rs, rr) = crossbeam_channel::bounded(queue_size);
         let (is, ir) = crossbeam_channel::bounded(queue_size);
+        
+        let mut metrics = Vec::new();
+        metrics.push(SiemMetricDefinition {
+            metric : SiemMetric::Gauge(QUEUED_LOGS_PARSING.clone(), 1.0),
+            name : Cow::Borrowed("queued_logs_parsing"),
+            description : Cow::Borrowed("Number of logs in the parsing queue"),
+            tags : BTreeMap::new()
+        });
+        metrics.push(SiemMetricDefinition {
+            metric : SiemMetric::Gauge(QUEUED_LOGS_ENRICHMENT.clone(), 1.0),
+            name : Cow::Borrowed("queued_logs_enrichment"),
+            description : Cow::Borrowed("Number of logs in the enrichment queue"),
+            tags : BTreeMap::new()
+        });
+        metrics.push(SiemMetricDefinition {
+            metric : SiemMetric::Gauge(QUEUED_LOGS_RULE_ENGINE.clone(), 1.0),
+            name : Cow::Borrowed("queued_logs_rule_engine"),
+            description : Cow::Borrowed("Number of logs in the rule engine queue"),
+            tags : BTreeMap::new()
+        });
+        metrics.push(SiemMetricDefinition {
+            metric : SiemMetric::Gauge(QUEUED_LOGS_INDEXING.clone(), 1.0),
+            name : Cow::Borrowed("queued_logs_indexing"),
+            description : Cow::Borrowed("Number of logs in the indexing queue"),
+            tags : BTreeMap::new()
+        });
+        metrics.push(SiemMetricDefinition {
+            metric : SiemMetric::Gauge(QUEUED_MESSAGES_FOR_KERNEL.clone(), 1.0),
+            name : Cow::Borrowed("queued_messages_for_kernel"),
+            description : Cow::Borrowed("Number of messages that the kernel has in the queue"),
+            tags : BTreeMap::new()
+        });
+        metrics.push(SiemMetricDefinition {
+            metric : SiemMetric::Counter(TOTAL_MESSAGES_PROCESSED.clone()),
+            name : Cow::Borrowed("total_messages_processed"),
+            description : Cow::Borrowed("Total number of messages processed by the kernel"),
+            tags : BTreeMap::new()
+        });
+
         return SiemBasicKernel {
             own_channel: (or, os),
             parser_channel: (pr, ps),
-            enchancer_channel: (er, es),
+            enricher_channel: (er, es),
             rule_engine_channel: (rr, rs),
             output_channel: (ir, is),
             input_components: Vec::new(),
@@ -119,10 +125,11 @@ impl SiemBasicKernel {
             norun_components: Vec::new(),
             parser_component: None,
             rule_engine_component: None,
-            enchancer_component: None,
+            enricher_component: None,
             output_component: None,
             dataset_manager: None,
             state_storage: None,
+            alert_component : None,
             max_threads_parsing: max_threads,
             max_threads_enchancing: max_threads,
             max_threads_output: max_threads,
@@ -131,22 +138,24 @@ impl SiemBasicKernel {
             command_map: BTreeMap::new(),
             dataset_map: BTreeMap::new(),
             task_map: BTreeMap::new(),
+            metrics,
             dataset_channels: Arc::new(Mutex::new(BTreeMap::new())),
         };
     }
 
-    fn map_components(&mut self, component: &Box<dyn SiemComponent>) {
+    fn register_component(&mut self, component: &Box<dyn SiemComponent>) {
         let caps = component.capabilities();
-        let comp_name = component.name().to_string();
+        let comp_name = component.name();
+        
         for dataset in caps.datasets() {
-            let data_name = dataset.name().to_string();
-            if !self.dataset_map.contains_key(&data_name) {
+            let dataset_type = dataset.name();
+            if !self.dataset_map.contains_key(&dataset_type) {
                 self.dataset_map
-                    .insert(data_name.to_string(), vec![comp_name.clone()]);
+                    .insert(dataset_type.clone(), vec![comp_name.to_string()]);
             } else {
-                match self.dataset_map.get_mut(&data_name) {
+                match self.dataset_map.get_mut(dataset_type) {
                     Some(v) => {
-                        v.push(comp_name.clone());
+                        v.push(comp_name.to_string());
                     }
                     None => {}
                 }
@@ -155,11 +164,11 @@ impl SiemBasicKernel {
         for comnd in caps.commands() {
             let data_name = comnd.name().to_string();
             if !self.command_map.contains_key(&data_name) {
-                self.command_map.insert(data_name, vec![comp_name.clone()]);
+                self.command_map.insert(data_name, vec![comp_name.to_string()]);
             } else {
                 match self.command_map.get_mut(&data_name) {
                     Some(v) => {
-                        v.push(comp_name.clone());
+                        v.push(comp_name.to_string());
                     }
                     None => {}
                 }
@@ -168,11 +177,11 @@ impl SiemBasicKernel {
         for task in caps.tasks() {
             let data_name = task.name().to_string();
             if !self.task_map.contains_key(&data_name) {
-                self.task_map.insert(data_name, vec![comp_name.clone()]);
+                self.task_map.insert(data_name, vec![comp_name.to_string()]);
             } else {
                 match self.task_map.get_mut(&data_name) {
                     Some(v) => {
-                        v.push(comp_name.clone());
+                        v.push(comp_name.to_string());
                     }
                     None => {}
                 }
@@ -180,34 +189,37 @@ impl SiemBasicKernel {
         }
     }
     pub fn register_input_component(&mut self, component: Box<dyn SiemComponent>) {
-        self.map_components(&component);
+        self.register_component(&component);
         self.input_components.push(component);
     }
     pub fn register_rule_engine_component(&mut self, component: Box<dyn SiemComponent>) {
-        self.map_components(&component);
+        self.register_component(&component);
         self.rule_engine_component = Some(component);
     }
     pub fn register_output_component(&mut self, component: Box<dyn SiemComponent>) {
-        self.map_components(&component);
+        self.register_component(&component);
         self.output_component = Some(component);
     }
     pub fn register_other_component(&mut self, component: Box<dyn SiemComponent>) {
-        self.map_components(&component);
+        self.register_component(&component);
         self.other_components.push(component);
     }
     pub fn register_parser_component(&mut self, component: Box<dyn SiemComponent>) {
-        self.map_components(&component);
+        self.register_component(&component);
         self.parser_component = Some(component);
     }
-    pub fn register_enchancer_component(&mut self, component: Box<dyn SiemComponent>) {
-        self.map_components(&component);
-        self.enchancer_component = Some(component);
+    pub fn register_enricher_component(&mut self, component: Box<dyn SiemComponent>) {
+        self.register_component(&component);
+        self.enricher_component = Some(component);
     }
     pub fn register_norun_component(&mut self, component: Box<dyn SiemComponent>) {
         self.norun_components.push(component);
     }
     pub fn register_dataset_manager(&mut self, component: Box<dyn SiemDatasetManager>) {
         self.dataset_manager = Some(component);
+    }
+    pub fn register_alert_component(&mut self, component: Box<dyn SiemComponent>) {
+        self.alert_component = Some(component);
     }
 
     fn run_component(
@@ -225,20 +237,21 @@ impl SiemBasicKernel {
             None => {} // Not gonna happen
         }
         let local_channel = component.local_channel();
-        let component_id = component.id();
+        let comp_id = component.id();
         component.set_datasets(datasets.clone());
-        let mut datasets = Vec::new();
-        for dts in component.capabilities().datasets() {
-            datasets.push(dts.name().to_string());
+
+        let mut required_datasets : Vec<&SiemDatasetType> = Vec::new();
+        let capabilities = component.capabilities();
+        for dts in capabilities.datasets() {
+            required_datasets.push(dts.name());
         }
         let thread_join = thread::spawn(move || {
             component.run();
             let mut params = BTreeMap::new();
-            params.insert(Cow::Borrowed("component_id"), Cow::Owned(component_id.to_string()));
+            params.insert(Cow::Borrowed("component_id"), Cow::Owned(comp_id.to_string()));
             let _e = kernel_channel.send(SiemMessage::Command(
-                component_id,
-                0,
-                SiemFunctionCall::OTHER(
+                SiemCommandHeader{comp_id, comm_id : 0, user : String::from("kernel")},
+                SiemCommandCall::OTHER(
                     Cow::Borrowed("COMPONENT_FINISHED"),
                     params
                 ),
@@ -246,16 +259,16 @@ impl SiemBasicKernel {
         });
         match self.dataset_channels.lock() {
             Ok(mut guard) => {
-                for dataset in datasets {
-                    if guard.contains_key(&dataset) {
-                        match guard.get_mut(&dataset) {
+                for req_dataset_type in required_datasets {
+                    if guard.contains_key(req_dataset_type) {
+                        match guard.get_mut(req_dataset_type) {
                             Some(v) => {
                                 v.push(local_channel.clone());
                             }
                             None => {}
                         }
                     } else {
-                        guard.insert(dataset, vec![local_channel.clone()]);
+                        guard.insert(req_dataset_type.clone(), vec![local_channel.clone()]);
                     }
                 }
             }
@@ -305,9 +318,9 @@ impl SiemBasicKernel {
                 panic!("No DatasetManager!")
             }
         };
-        let mut datasets = vec![];
+        let mut datasets : Vec<SiemDataset> = vec![];
         let dataset_guard = dataset_lock.lock().unwrap();
-        for data in dataset_guard.iter() {
+        for (_data_type, data) in dataset_guard.iter() {
             datasets.push(data.clone());
         }
         drop(dataset_guard);
@@ -315,20 +328,20 @@ impl SiemBasicKernel {
         return datasets;
     }
 
-    fn get_components_for_command(&self, call: &SiemFunctionCall) -> Option<&Vec<String>> {
+    fn get_components_for_command(&self, call: &SiemCommandCall) -> Option<&Vec<String>> {
         let mut call_name = String::new();
         match call {
-            SiemFunctionCall::START_COMPONENT(_) => call_name = String::from("START_COMPONENT"),
-            SiemFunctionCall::STOP_COMPONENT(_) => call_name = String::from("STOP_COMPONENT"),
-            SiemFunctionCall::FILTER_DOMAIN(_, _) => call_name = String::from("FILTER_DOMAIN"),
-            SiemFunctionCall::FILTER_EMAIL_SENDER(_, _) => {
+            SiemCommandCall::START_COMPONENT(_) => call_name = String::from("START_COMPONENT"),
+            SiemCommandCall::STOP_COMPONENT(_) => call_name = String::from("STOP_COMPONENT"),
+            SiemCommandCall::FILTER_DOMAIN(_, _) => call_name = String::from("FILTER_DOMAIN"),
+            SiemCommandCall::FILTER_EMAIL_SENDER(_, _) => {
                 call_name = String::from("FILTER_EMAIL_SENDER")
             }
-            SiemFunctionCall::FILTER_IP(_, _) => call_name = String::from("FILTER_IP"),
-            SiemFunctionCall::ISOLATE_ENDPOINT(_) => call_name = String::from("ISOLATE_ENDPOINT"),
-            SiemFunctionCall::ISOLATE_IP(_) => call_name = String::from("ISOLATE_IP"),
-            SiemFunctionCall::LOG_QUERY(_) => call_name = String::from("LOG_QUERY"),
-            SiemFunctionCall::OTHER(name, _) => call_name = name.to_string(),
+            SiemCommandCall::FILTER_IP(_, _) => call_name = String::from("FILTER_IP"),
+            SiemCommandCall::ISOLATE_ENDPOINT(_) => call_name = String::from("ISOLATE_ENDPOINT"),
+            SiemCommandCall::ISOLATE_IP(_) => call_name = String::from("ISOLATE_IP"),
+            SiemCommandCall::LOG_QUERY(_) => call_name = String::from("LOG_QUERY"),
+            SiemCommandCall::OTHER(name, _) => call_name = name.to_string(),
             _ => {}
         }
         return self.command_map.get(&call_name);
@@ -338,10 +351,6 @@ impl SiemBasicKernel {
     }
 
     pub fn run(&mut self) {
-        #[cfg(feature = "metrics")]
-        {
-            register_custom_metrics();
-        }
         // First create the instances of each component
         let mut component_id: u64 = 0;
         // Component 0 = DatasetManager
@@ -353,7 +362,7 @@ impl SiemBasicKernel {
         // ID = (Comp_ID, Timestamp)
         let mut task_response_track: BTreeMap<u64, (u64, i64)> = BTreeMap::new();
         let mut running_parsers = Vec::new();
-        let mut running_enchancers = Vec::new();
+        let mut running_enrichers = Vec::new();
         let mut running_outputs = Vec::new();
         let mut running_rule_engine = Vec::new();
         let mut command_id_gen = 0;
@@ -390,7 +399,7 @@ impl SiemBasicKernel {
                 let comp_name = new_comp.name().to_string();
                 new_comp.set_id(component_id);
                 let r = self.parser_channel.0.clone();
-                let s = self.enchancer_channel.1.clone();
+                let s = self.enricher_channel.1.clone();
                 new_comp.set_log_channel(s, r);
                 let (thread_join, local_channel) = self.run_component(new_comp, datasets.clone());
                 match component_map.get_mut(&comp_name) {
@@ -409,13 +418,13 @@ impl SiemBasicKernel {
                 panic!("Kernel needs a ParserComponent!!")
             }
         };
-        match &self.enchancer_component {
+        match &self.enricher_component {
             Some(comp) => {
                 let mut new_comp = (*comp).duplicate();
                 component_id += 1;
                 let comp_name = new_comp.name().to_string();
                 new_comp.set_id(component_id);
-                let r = self.enchancer_channel.0.clone();
+                let r = self.enricher_channel.0.clone();
                 let s = self.rule_engine_channel.1.clone();
                 new_comp.set_log_channel(s, r);
                 let (thread_join, local_channel) = self.run_component(new_comp, datasets.clone());
@@ -429,10 +438,10 @@ impl SiemBasicKernel {
                 }
                 component_reverse_map.insert(component_id, comp_name);
                 thread_map.insert(component_id, (thread_join, local_channel));
-                running_enchancers.push(component_id);
+                running_enrichers.push(component_id);
             }
             None => {
-                panic!("Kernel needs a EnchancerComponent!!")
+                panic!("Kernel needs a enricherComponent!!")
             }
         };
         match &self.rule_engine_component {
@@ -504,16 +513,15 @@ impl SiemBasicKernel {
             component_reverse_map.insert(component_id, comp_name);
             thread_map.insert(component_id, (thread_join, local_channel));
         }
-
-        match &self.dataset_manager {
-            Some(comp) => {
-                let mut new_comp = (*comp).duplicate();
+        // We can take the dataset manager. If for whatever reason the thread ends, then we will end the execution of the entire program.
+        match self.dataset_manager.take() {
+            Some(mut comp) => {
                 let kernel_channel = self.own_channel.1.clone();
-                new_comp.set_kernel_sender(kernel_channel);
-                new_comp.set_dataset_channels(dataset_channels);
-                let local_channel = new_comp.local_channel();
+                comp.set_kernel_sender(kernel_channel);
+                comp.set_dataset_channels(dataset_channels);
+                let local_channel = comp.local_channel();
                 let thread_join = thread::spawn(move || {
-                    new_comp.run();
+                    comp.run();
                 });
                 thread_map.insert(0, (thread_join, local_channel));
             }
@@ -522,14 +530,39 @@ impl SiemBasicKernel {
             }
         };
 
+        match &self.alert_component {
+            Some(comp) => {
+                let mut new_comp = (*comp).duplicate();
+                component_id += 1;
+                let comp_name = new_comp.name().to_string();
+                new_comp.set_id(component_id);
+                let (thread_join, local_channel) = self.run_component(new_comp, datasets.clone());
+                match component_map.get_mut(&comp_name) {
+                    Some(k) => {
+                        k.push(component_id);
+                    }
+                    None => {
+                        component_map.insert(comp_name.clone(), vec![component_id]);
+                    }
+                }
+                component_reverse_map.insert(component_id, comp_name);
+                thread_map.insert(component_id, (thread_join, local_channel));
+            },
+            None => {
+                panic!("Kernel needs a AlertComponent!!")
+            }
+        };
+        let mut total_messages = 0;
         loop {
+            
             #[cfg(feature = "metrics")]
             {
-                QUEUED_LOGS_PARSING.set(self.parser_channel.0.len() as i64);
-                QUEUED_LOGS_ENCHANCING.set(self.enchancer_channel.0.len() as i64);
-                QUEUED_LOGS_RULE_ENGINE.set(self.rule_engine_channel.0.len() as i64);
-                QUEUED_LOGS_INDEXING.set(self.output_channel.0.len() as i64);
-                MESSAGES_FOR_KERNEL.set(self.own_channel.0.len() as i64);
+                QUEUED_LOGS_PARSING.store(self.parser_channel.0.len() as i64, std::sync::atomic::Ordering::Relaxed);
+                QUEUED_LOGS_ENRICHMENT.store(self.enricher_channel.0.len() as i64, std::sync::atomic::Ordering::Relaxed);
+                QUEUED_LOGS_RULE_ENGINE.store(self.rule_engine_channel.0.len() as i64, std::sync::atomic::Ordering::Relaxed);
+                QUEUED_LOGS_INDEXING.store(self.output_channel.0.len() as i64, std::sync::atomic::Ordering::Relaxed);
+                QUEUED_MESSAGES_FOR_KERNEL.store(self.own_channel.0.len() as i64, std::sync::atomic::Ordering::Relaxed);
+                TOTAL_MESSAGES_PROCESSED.store(total_messages, std::sync::atomic::Ordering::Relaxed);
             }
             // Get last dataset info
             let mut updated_datasets = false;
@@ -550,7 +583,7 @@ impl SiemBasicKernel {
                                     let comp_name = new_comp.name().to_string();
                                     new_comp.set_id(component_id);
                                     let r = self.parser_channel.0.clone();
-                                    let s = self.enchancer_channel.1.clone();
+                                    let s = self.enricher_channel.1.clone();
                                     new_comp.set_log_channel(s, r);
                                     let (thread_join, local_channel) =
                                         self.run_component(new_comp, datasets.clone());
@@ -573,11 +606,11 @@ impl SiemBasicKernel {
                 }
                 None => {} // Not posible
             }
-            match self.enchancer_channel.0.capacity() {
+            match self.enricher_channel.0.capacity() {
                 Some(capacity) => {
-                    if (self.enchancer_channel.0.len() as f64) > (0.9 * (capacity as f64)) {
-                        if running_enchancers.len() < self.max_threads_enchancing as usize {
-                            match &self.enchancer_component {
+                    if (self.enricher_channel.0.len() as f64) > (0.9 * (capacity as f64)) {
+                        if running_enrichers.len() < self.max_threads_enchancing as usize {
+                            match &self.enricher_component {
                                 Some(comp) => {
                                     if !updated_datasets {
                                         datasets = self.get_datasets();
@@ -585,10 +618,10 @@ impl SiemBasicKernel {
                                     }
                                     let mut new_comp = (*comp).duplicate();
                                     component_id += 1;
-                                    running_enchancers.push(component_id);
+                                    running_enrichers.push(component_id);
                                     let comp_name = new_comp.name().to_string();
                                     new_comp.set_id(component_id);
-                                    let r = self.enchancer_channel.0.clone();
+                                    let r = self.enricher_channel.0.clone();
                                     let s = self.rule_engine_channel.1.clone();
                                     new_comp.set_log_channel(s, r);
                                     let (thread_join, local_channel) =
@@ -694,31 +727,34 @@ impl SiemBasicKernel {
                 match self.own_channel.0.try_recv() {
                     Ok(msg) => {
                         let mut for_kernel = false;
+                        total_messages += 1;
                         match &msg {
-                            SiemMessage::Command(comp_id,comm_id, call) => {
-                                let for_component = *comp_id;
+                            SiemMessage::Command(comm_hdr, call) => {
+                                let from_component = comm_hdr.comp_id;
                                 match call {
-                                    SiemFunctionCall::START_COMPONENT(_comp_name) => {
+                                    SiemCommandCall::START_COMPONENT(_comp_name) => {
                                         for_kernel = true;
                                         //TODO
                                     }
-                                    SiemFunctionCall::STOP_COMPONENT(comp_name) => {
+                                    SiemCommandCall::STOP_COMPONENT(comp_name) => {
                                         for_kernel = true;
                                         if comp_name == "KERNEL" {
                                             return
                                         }
                                         //TODO
                                     }
-                                    SiemFunctionCall::OTHER(name, _params) => {
+                                    SiemCommandCall::OTHER(name, _params) => {
+                                        // Internal implementation of this kernel to detect when a component exits
                                         if name == "COMPONENT_FINISHED" {
+                                            total_messages -= 1;// This does not count as a message
                                             for_kernel = true;
-                                            // Remove all references to this ID
-                                            match component_reverse_map.get(comp_id) {
+                                            // Remove all references to this component ID
+                                            match component_reverse_map.get(&comm_hdr.comp_id) {
                                                 Some(comp_name) => {
                                                     match component_map.get_mut(comp_name) {
                                                         Some(id_list) => {
                                                             id_list.retain(|value| {
-                                                                *value != for_component
+                                                                *value != from_component
                                                             });
                                                         }
                                                         None => {}
@@ -726,18 +762,18 @@ impl SiemBasicKernel {
                                                 }
                                                 None => {}
                                             }
-                                            thread_map.remove(comp_id);
+                                            thread_map.remove(&comm_hdr.comp_id);
                                             self.regenerate_dataset_channels(
                                                 &thread_map,
                                                 &component_map,
                                             );
                                             //
-                                            running_parsers.retain(|value| *value != for_component);
-                                            running_enchancers
-                                                .retain(|value| *value != for_component);
+                                            running_parsers.retain(|value| *value != from_component);
+                                            running_enrichers
+                                                .retain(|value| *value != from_component);
                                             running_rule_engine
-                                                .retain(|value| *value != for_component);
-                                            running_outputs.retain(|value| *value != for_component);
+                                                .retain(|value| *value != from_component);
+                                            running_outputs.retain(|value| *value != from_component);
                                         }
                                     }
                                     _ => {}
@@ -748,21 +784,20 @@ impl SiemBasicKernel {
                                             command_id_gen += 1;
                                             command_response_track.insert(
                                                 command_id_gen,
-                                                (*comp_id, *comm_id, chrono::Utc::now().timestamp_millis()),
+                                                (comm_hdr.comp_id, comm_hdr.comm_id, chrono::Utc::now().timestamp_millis()),
                                             );
                                             for cmp in v {
                                                 match component_map.get(cmp) {
                                                     Some(ids) => {
-                                                        let selected_id = select_random_id(
+                                                        let selected_component = select_random_id(
                                                             command_id_gen as usize,
                                                             ids,
                                                         );
-                                                        match thread_map.get(&selected_id) {
+                                                        match thread_map.get(&selected_component) {
                                                             Some((_, channel)) => {
                                                                 let _r = channel.send(
                                                                     SiemMessage::Command(
-                                                                        for_component,
-                                                                        command_id_gen,
+                                                                        SiemCommandHeader { comp_id : from_component, comm_id :command_id_gen, user : comm_hdr.user.clone()},
                                                                         call.clone(),
                                                                     ),
                                                                 );
@@ -778,41 +813,42 @@ impl SiemBasicKernel {
                                     }
                                 }
                             }
-                            SiemMessage::Response(resp_id, response) => {
-                                match command_response_track.get(resp_id) {
-                                    Some((comp_id,comm_id, timestamp)) => {
+                            SiemMessage::Response(comm_hdr, response) => {
+                                // Localize which component needs the response
+                                match command_response_track.get(&comm_hdr.comm_id) {
+                                    Some((resp_comp_id,resp_comm_id, timestamp)) => {
                                         let timestamp_now = chrono::Utc::now().timestamp_millis();
-                                        MESSAGE_RESPONSE_TIME
-                                            .with_label_values(&[COMMAND_RESPONSE_LABEL])
-                                            .observe(((timestamp_now - timestamp) as f64) / 1000.0);
+                                        // Update time metric ((timestamp_now - timestamp) as f64) / 1000.0
                                         if (timestamp_now - timestamp)
                                             > self.command_response_timeout
                                         {
                                             // Excessive response time. Do something
                                         } else {
-                                            match thread_map.get(comp_id) {
+                                            match thread_map.get(resp_comp_id) {
                                                 Some((_, channel)) => {
                                                     let _r = channel.send(SiemMessage::Response(
-                                                        *comm_id, // Replace the response ID with the original command ID
+                                                        SiemCommandHeader {comm_id : *resp_comm_id, comp_id : 0, user : comm_hdr.user.clone()},
                                                         response.clone(),
                                                     ));
                                                 }
-                                                None => {}
+                                                None => {
+                                                    // Component dead? => Do nothing with the response
+                                                }
                                             }
                                         }
-                                    }
+                                    },
                                     None => {}
                                 }
                             }
                             SiemMessage::Alert(_alert) => {}
                             SiemMessage::Notification(_comp_id, _notification) => {}
-                            SiemMessage::Task(comp_id, task) => {
+                            SiemMessage::Task(comm_hdr, task) => {
                                 match self.get_components_for_task(&task.origin) {
                                     Some(v) => {
                                         task_id_gen += 1;
                                         let timestamp = chrono::Utc::now().timestamp_millis();
                                         task_response_track
-                                            .insert(task_id_gen, (*comp_id, timestamp));
+                                            .insert(task_id_gen, (comm_hdr.comp_id, timestamp));
                                         for cmp in v {
                                             match component_map.get(cmp) {
                                                 Some(ids) => {
@@ -825,7 +861,7 @@ impl SiemBasicKernel {
                                                         Some((_, channel)) => {
                                                             let _r =
                                                                 channel.send(SiemMessage::Task(
-                                                                    task_id_gen,
+                                                                    SiemCommandHeader {comm_id : task_id_gen, comp_id : comm_hdr.comm_id, user : comm_hdr.user.clone()},
                                                                     clonned_task,
                                                                 ));
                                                         }
@@ -839,13 +875,11 @@ impl SiemBasicKernel {
                                     None => {}
                                 }
                             }
-                            SiemMessage::TaskResult(task_id, task_res) => {
-                                match task_response_track.get(task_id) {
+                            SiemMessage::TaskResult(task_hdr, task_res) => {
+                                match task_response_track.get(&task_hdr.comm_id) {
                                     Some((comp_id, timestamp)) => {
                                         let timestamp_now = chrono::Utc::now().timestamp_millis();
-                                        MESSAGE_RESPONSE_TIME
-                                            .with_label_values(&[TASK_RESPONSE_LABEL])
-                                            .observe(((timestamp_now - timestamp) as f64) / 1000.0);
+                                        // TODO: update time metric ((timestamp_now - timestamp) as f64) / 1000.0
                                         if (timestamp_now - timestamp)
                                             > self.command_response_timeout
                                         {
@@ -854,7 +888,7 @@ impl SiemBasicKernel {
                                             match thread_map.get(comp_id) {
                                                 Some((_, channel)) => {
                                                     let _r = channel.send(SiemMessage::TaskResult(
-                                                        *task_id,
+                                                        SiemCommandHeader {comm_id : task_hdr.comm_id, comp_id : task_hdr.comp_id, user : String::from("kernel")},
                                                         task_res.clone(),
                                                     ));
                                                 }
@@ -883,7 +917,12 @@ impl SiemBasicKernel {
             }
         }
     }
+
+    pub fn get_metrics(&self) -> Vec<SiemMetricDefinition> {
+        self.metrics.clone()
+    }
 }
+
 
 fn select_random_id(id: usize, vc: &Vec<u64>) -> u64 {
     vc[id % vc.len()]
@@ -891,11 +930,13 @@ fn select_random_id(id: usize, vc: &Vec<u64>) -> u64 {
 
 #[cfg(test)]
 mod tests {
+
+    use std::sync::atomic::Ordering;
+
     use super::*;
     use super::test_comp::{BasicComponent, BasicDatasetManager};
 
-    #[test]
-    fn test_kernel_instance() {
+    fn setup_dummy_kernel() -> SiemBasicKernel {
         let mut kernel = SiemBasicKernel::new(1000, 4, 5000);
         let comp = BasicComponent::new();
         let dm = BasicDatasetManager::new();
@@ -904,23 +945,47 @@ mod tests {
         let ec = BasicComponent::new();
         let oc = BasicComponent::new();
         let re = BasicComponent::new();
+        let ac = BasicComponent::new();
         kernel.register_other_component(Box::new(comp));
         kernel.register_dataset_manager(Box::new(dm));
         kernel.register_input_component(Box::new(ic));
         kernel.register_output_component(Box::new(oc));
         kernel.register_parser_component(Box::new(pc));
         kernel.register_rule_engine_component(Box::new(re));
-        kernel.register_enchancer_component(Box::new(ec));
+        kernel.register_enricher_component(Box::new(ec));
+        kernel.register_alert_component(Box::new(ac));
+        kernel
+    }
+
+    #[test]
+    fn test_kernel_instance() {
+        let mut kernel = setup_dummy_kernel();
         let sender = kernel.own_channel.1.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(300));
             // STOP parser component to finish testing
+            for _ in 0..20 {
+                let _r = sender.send(SiemMessage::Command(
+                    SiemCommandHeader{ comp_id : 0, comm_id : 0, user : String::from("kernel")},
+                    SiemCommandCall::GET_RULE(String::from("no_exists_rule")),
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(300));
             let _r = sender.send(SiemMessage::Command(
-                0,
-                0,
-                SiemFunctionCall::STOP_COMPONENT(Cow::Borrowed("KERNEL")),
+                SiemCommandHeader{ comp_id : 0, comm_id : 0, user : String::from("kernel")},
+                SiemCommandCall::STOP_COMPONENT(Cow::Borrowed("KERNEL")),
             ));
+            
         });
         kernel.run();
+        let mut metrics = BTreeMap::new();
+        kernel.get_metrics().iter().for_each(|v| { metrics.insert(v.name.to_string(), v.metric.clone());});
+        // Test metrics are working
+        if let SiemMetric::Counter(val) = metrics.get("total_messages_processed").unwrap() {
+            assert_eq!(20.0 as i64, val.load(Ordering::Relaxed));
+        }else{ panic!("")}
+        
+        
+        
     }
 }
