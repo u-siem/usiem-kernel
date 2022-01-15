@@ -1,4 +1,5 @@
-use crossbeam_channel::{Receiver, Sender};
+use usiem::crossbeam_channel::{Receiver, Sender};
+use usiem::crossbeam_channel;
 use usiem::components::common::{
     SiemComponentCapabilities, SiemComponentStateStorage, SiemMessage
 };

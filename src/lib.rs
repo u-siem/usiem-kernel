@@ -1,7 +1,8 @@
-use crossbeam_channel::{Receiver, Sender, TryRecvError};
+use usiem::crossbeam_channel::{Receiver, Sender, TryRecvError};
+use usiem::crossbeam_channel;
+use usiem::chrono;
 use lazy_static::lazy_static;
 use std::sync::atomic::AtomicI64;
-use prometheus::{self, HistogramOpts, HistogramVec, IntGauge, Registry};
 use usiem::components::metrics::{SiemMetricDefinition, SiemMetric};
 use std::borrow::Cow;
 use std::collections::BTreeMap;
