@@ -330,22 +330,21 @@ impl SiemBasicKernel {
     }
 
     fn get_components_for_command(&self, call: &SiemCommandCall) -> Option<&Vec<String>> {
-        let mut call_name = String::new();
-        match call {
-            SiemCommandCall::START_COMPONENT(_) => call_name = String::from("START_COMPONENT"),
-            SiemCommandCall::STOP_COMPONENT(_) => call_name = String::from("STOP_COMPONENT"),
-            SiemCommandCall::FILTER_DOMAIN(_, _) => call_name = String::from("FILTER_DOMAIN"),
-            SiemCommandCall::FILTER_EMAIL_SENDER(_, _) => {
-                call_name = String::from("FILTER_EMAIL_SENDER")
+        let call_name =  match call {
+            SiemCommandCall::START_COMPONENT(_) => "START_COMPONENT",
+            SiemCommandCall::STOP_COMPONENT(_) => "STOP_COMPONENT",
+            SiemCommandCall::FILTER_DOMAIN(_) => "FILTER_DOMAIN",
+            SiemCommandCall::FILTER_EMAIL_SENDER(_) => {
+                "FILTER_EMAIL_SENDER"
             }
-            SiemCommandCall::FILTER_IP(_, _) => call_name = String::from("FILTER_IP"),
-            SiemCommandCall::ISOLATE_ENDPOINT(_) => call_name = String::from("ISOLATE_ENDPOINT"),
-            SiemCommandCall::ISOLATE_IP(_) => call_name = String::from("ISOLATE_IP"),
-            SiemCommandCall::LOG_QUERY(_) => call_name = String::from("LOG_QUERY"),
-            SiemCommandCall::OTHER(name, _) => call_name = name.to_string(),
-            _ => {}
-        }
-        return self.command_map.get(&call_name);
+            SiemCommandCall::FILTER_IP(_) => "FILTER_IP",
+            SiemCommandCall::ISOLATE_ENDPOINT(_) => "ISOLATE_ENDPOINT",
+            SiemCommandCall::ISOLATE_IP(_) => "ISOLATE_IP",
+            SiemCommandCall::LOG_QUERY(_) => "LOG_QUERY",
+            SiemCommandCall::OTHER(name, _) => &name,
+            _ => ""
+        };
+        return self.command_map.get(call_name);
     }
     fn get_components_for_task(&self, task: &String) -> Option<&Vec<String>> {
         return self.task_map.get(task);
@@ -974,9 +973,8 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(300));
             let _r = sender.send(SiemMessage::Command(
                 SiemCommandHeader{ comp_id : 0, comm_id : 0, user : String::from("kernel")},
-                SiemCommandCall::STOP_COMPONENT(Cow::Borrowed("KERNEL")),
+                SiemCommandCall::STOP_COMPONENT("KERNEL".to_string()),
             ));
-            
         });
         kernel.run();
         let mut metrics = BTreeMap::new();
