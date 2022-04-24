@@ -14,7 +14,7 @@ use usiem::components::common::{
     SiemComponentStateStorage, SiemMessage,
 };
 use usiem::components::command::{SiemCommandCall, SiemCommandHeader};
-use usiem::components::dataset::{SiemDataset, SiemDatasetType};
+use usiem::components::dataset::{SiemDatasetType};
 use usiem::components::{SiemComponent, SiemDatasetManager};
 use usiem::events::SiemLog;
 
@@ -362,7 +362,6 @@ impl SiemBasicKernel {
         let mut command_id_gen = 0;
         let mut task_id_gen = 0;
         let mut datasets = self.get_datasets();
-        let dataset_channels = Arc::clone(&self.dataset_channels);
         if self.input_components.len() == 0 {
             panic!("Kernel needs a InputComponent to receive logs!!!");
         }
