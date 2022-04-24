@@ -1,19 +1,18 @@
+use usiem::components::dataset::holder::DatasetHolder;
 use usiem::crossbeam_channel::{Receiver, Sender};
 use usiem::crossbeam_channel;
 use usiem::components::common::{
     SiemComponentCapabilities, SiemComponentStateStorage, SiemMessage
 };
-use usiem::components::dataset::{SiemDataset, SiemDatasetType};
+use usiem::components::dataset::{SiemDatasetType};
 use usiem::components::{SiemComponent, SiemDatasetManager};
 use usiem::events::SiemLog;
 use std::borrow::Cow;
-use std::sync::{Arc, Mutex};
-use std::collections::BTreeMap;
 use std::vec;
 use lazy_static::lazy_static;
 
 lazy_static! {
-    static ref DATASETS : Arc<Mutex<BTreeMap<SiemDatasetType,SiemDataset>>> = Arc::new(Mutex::new(BTreeMap::new()));
+    static ref DATASETS : DatasetHolder = DatasetHolder::from_datasets(vec![]);
 }
 
 #[derive(Clone)]
@@ -65,7 +64,7 @@ impl SiemComponent for BasicComponent {
     fn duplicate(&self) -> Box<dyn SiemComponent> {
         return Box::new(self.clone());
     }
-    fn set_datasets(&mut self, _datasets: Vec<SiemDataset>) {}
+    fn set_datasets(&mut self, _datasets: DatasetHolder) {}
     fn run(&mut self) {}
     fn set_storage(&mut self, _conn: Box<dyn SiemComponentStateStorage>) {}
 
@@ -113,11 +112,8 @@ impl SiemDatasetManager for BasicDatasetManager {
         self.kernel_sender = sender;
     }
     fn run(&mut self) {}
-    fn get_datasets(&self) ->  Arc<Mutex<BTreeMap<SiemDatasetType,SiemDataset>>> {
-        return Arc::clone(&DATASETS);
-    }
-    fn set_dataset_channels(&mut self, _channels : Arc<Mutex<BTreeMap<SiemDatasetType,Vec<Sender<SiemMessage>>>>>) {
-
+    fn get_datasets(&self) -> DatasetHolder {
+        return DATASETS.clone()
     }
     fn register_dataset(&mut self, _dataset : SiemDatasetType) {}
 }

@@ -1,3 +1,4 @@
+use usiem::components::dataset::holder::DatasetHolder;
 use usiem::crossbeam_channel::{Receiver, Sender, TryRecvError};
 use usiem::crossbeam_channel;
 use usiem::chrono;
@@ -226,7 +227,7 @@ impl SiemBasicKernel {
     fn run_component(
         &self,
         mut component: Box<dyn SiemComponent>,
-        datasets: Vec<SiemDataset>,
+        datasets: DatasetHolder,
     ) -> (JoinHandle<()>, Sender<SiemMessage>) {
         let kernel_channel = self.own_channel.1.clone();
         component.set_kernel_sender(kernel_channel);
@@ -239,7 +240,7 @@ impl SiemBasicKernel {
         }
         let local_channel = component.local_channel();
         let comp_id = component.id();
-        component.set_datasets(datasets.clone());
+        component.set_datasets(datasets);
 
         let mut required_datasets : Vec<&SiemDatasetType> = Vec::new();
         let capabilities = component.capabilities();
@@ -312,21 +313,14 @@ impl SiemBasicKernel {
         }
     }
 
-    fn get_datasets(&self) -> Vec<SiemDataset> {
-        let dataset_lock = match &self.dataset_manager {
+    fn get_datasets(&self) -> DatasetHolder {
+        let dataset_holder = match &self.dataset_manager {
             Some(dataset_manager) => dataset_manager.get_datasets(),
             None => {
                 panic!("No DatasetManager!")
             }
         };
-        let mut datasets : Vec<SiemDataset> = vec![];
-        let dataset_guard = dataset_lock.lock().unwrap();
-        for (_data_type, data) in dataset_guard.iter() {
-            datasets.push(data.clone());
-        }
-        drop(dataset_guard);
-        drop(dataset_lock);
-        return datasets;
+        dataset_holder
     }
 
     fn get_components_for_command(&self, call: &SiemCommandCall) -> Option<&Vec<String>> {
@@ -518,7 +512,6 @@ impl SiemBasicKernel {
             Some(mut comp) => {
                 let kernel_channel = self.own_channel.1.clone();
                 comp.set_kernel_sender(kernel_channel);
-                comp.set_dataset_channels(dataset_channels);
                 let local_channel = comp.local_channel();
                 let thread_join = thread::spawn(move || {
                     comp.run();
@@ -916,6 +909,9 @@ impl SiemBasicKernel {
                 }
             }
         }
+    }
+    pub fn register_state_storage(&mut self, state_storage : Box<dyn SiemComponentStateStorage>) {
+        self.state_storage = Some(state_storage);
     }
 
     pub fn get_metrics(&self) -> Vec<SiemMetricDefinition> {
