@@ -18,37 +18,37 @@ pub fn generate_kernel_metrics() -> Vec<SiemMetricDefinition> {
             metric: SiemMetric::Gauge(QUEUED_LOGS_PARSING.clone(), 1.0),
             name: LogString::Borrowed("queued_logs_parsing"),
             description: LogString::Borrowed("Number of logs in the parsing queue"),
-            tags: BTreeMap::new(),
+            labels: BTreeMap::new(),
         },
         SiemMetricDefinition {
             metric: SiemMetric::Gauge(QUEUED_LOGS_ENRICHMENT.clone(), 1.0),
             name: LogString::Borrowed("queued_logs_enrichment"),
             description: LogString::Borrowed("Number of logs in the enrichment queue"),
-            tags: BTreeMap::new(),
+            labels: BTreeMap::new(),
         },
         SiemMetricDefinition {
             metric: SiemMetric::Gauge(QUEUED_LOGS_RULE_ENGINE.clone(), 1.0),
             name: LogString::Borrowed("queued_logs_rule_engine"),
             description: LogString::Borrowed("Number of logs in the rule engine queue"),
-            tags: BTreeMap::new(),
+            labels: BTreeMap::new(),
         },
         SiemMetricDefinition {
             metric: SiemMetric::Gauge(QUEUED_LOGS_INDEXING.clone(), 1.0),
             name: LogString::Borrowed("queued_logs_indexing"),
             description: LogString::Borrowed("Number of logs in the indexing queue"),
-            tags: BTreeMap::new(),
+            labels: BTreeMap::new(),
         },
         SiemMetricDefinition {
             metric: SiemMetric::Gauge(QUEUED_MESSAGES_FOR_KERNEL.clone(), 1.0),
             name: LogString::Borrowed("queued_messages_for_kernel"),
             description: LogString::Borrowed("Number of messages that the kernel has in the queue"),
-            tags: BTreeMap::new(),
+            labels: BTreeMap::new(),
         },
         SiemMetricDefinition {
             metric: SiemMetric::Counter(TOTAL_MESSAGES_PROCESSED.clone()),
             name: LogString::Borrowed("total_messages_processed_by_kernel"),
             description: LogString::Borrowed("Total number of messages processed by the kernel"),
-            tags: BTreeMap::new(),
+            labels: BTreeMap::new(),
         },
     ]
 }
