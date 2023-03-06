@@ -20,5 +20,5 @@ metrics = []
 [dependencies]
 u-siem = { version = "0"}
 lazy_static = "1.4"
-rand = "*"
+rand = "0.8"
 async-std = "1"
