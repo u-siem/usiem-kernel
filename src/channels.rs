@@ -1,6 +1,6 @@
 use usiem::{
     crossbeam_channel::{self, Receiver, Sender},
-    prelude::{SiemLog, SiemMessage, SiemAlert},
+    prelude::{SiemAlert, SiemLog, SiemMessage},
 };
 
 use crate::metrics::*;
@@ -15,10 +15,11 @@ pub struct ComponentChannels {
     pub output_channel: (Receiver<SiemLog>, Sender<SiemLog>),
     pub wal_log: (Receiver<SiemLog>, Sender<SiemLog>),
     pub scaling_limit: f64,
+    pub metrics: KernelMetrics,
 }
 
 impl ComponentChannels {
-    pub fn new(channel_size: usize, scaling_limit: f64) -> Self {
+    pub fn new(channel_size: usize, scaling_limit: f64, metrics: KernelMetrics) -> Self {
         let (os, or) = crossbeam_channel::bounded(channel_size);
         let (ps, pr) = crossbeam_channel::bounded(channel_size);
         let (es, er) = crossbeam_channel::bounded(channel_size);
@@ -34,32 +35,31 @@ impl ComponentChannels {
             rule_engine_channel: (rr, rs),
             output_channel: (ir, is),
             wal_log: (wr, ws),
-            alert_channel : (alert_r, alert_s),
+            alert_channel: (alert_r, alert_s),
             scaling_limit,
+            metrics,
         }
     }
 
     pub fn update_metrics(&self) {
-        QUEUED_LOGS_PARSING.store(
-            self.parser_channel.0.len() as i64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        QUEUED_LOGS_ENRICHMENT.store(
-            self.enricher_channel.0.len() as i64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        QUEUED_LOGS_RULE_ENGINE.store(
-            self.rule_engine_channel.0.len() as i64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        QUEUED_LOGS_INDEXING.store(
-            self.output_channel.0.len() as i64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
-        QUEUED_MESSAGES_FOR_KERNEL.store(
-            self.kernel_channel.0.len() as i64,
-            std::sync::atomic::Ordering::Relaxed,
-        );
+        self.metrics
+            .queued_logs_parsing
+            .set(self.parser_channel.0.len() as f64);
+        self.metrics
+            .queued_logs_enrichment
+            .set(self.enricher_channel.0.len() as f64);
+        self.metrics
+            .queued_logs_rule_engine
+            .set(self.rule_engine_channel.0.len() as f64);
+        self.metrics
+            .queued_logs_indexing
+            .set(self.output_channel.0.len() as f64);
+        self.metrics
+            .queued_messages_for_kernel
+            .set(self.parser_channel.0.len() as f64);
+        self.metrics
+            .queued_logs_parsing
+            .set(self.kernel_channel.0.len() as f64);
     }
 
     pub fn scale_parser(&self) -> ScaleAction {

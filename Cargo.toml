@@ -1,12 +1,12 @@
 [package]
 name = "u-siem-kernel"
-version = "0.2.2"
+version = "0.3.0"
 authors = ["Samuel Garcés <samuel.garces@protonmail.com>"]
 license = "MIT"
 description = "uSIEM Kernel. Library to be used to build a custom SIEM with the framework uSIEM"
 repository = "https://github.com/u-siem/usiem-kernel"
 keywords = ["SIEM", "security", "logs"]
-categories = ["security"]
+categories = ["parsing"]
 edition = "2021"
 
 [lib]
@@ -18,7 +18,7 @@ default = ["metrics"]
 metrics = []
 
 [dependencies]
-u-siem = { version = "0"}
-lazy_static = "1.4"
+#u-siem = { version = "0"}
+u-siem = {path = "../u-siem-core"}
 rand = "0.8"
 async-std = "1"

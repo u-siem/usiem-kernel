@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use usiem::prelude::{
-    storage::SiemComponentStateStorage, task::{SiemTaskType, TaskDefinition}, SiemCommandCall, SiemComponent,
-    SiemDatasetType, SiemFunctionType,
+    storage::SiemComponentStateStorage,
+    task::{SiemTaskType, TaskDefinition},
+    SiemCommandCall, SiemComponent, SiemDatasetType, SiemFunctionType,
 };
 
 #[derive(Default)]
@@ -34,21 +35,54 @@ pub struct SiemComponentStore {
 impl Clone for SiemComponentStore {
     fn clone(&self) -> Self {
         let mut task_map = BTreeMap::new();
-        self.task_map.iter().for_each(|(k,v)| {
+        self.task_map.iter().for_each(|(k, v)| {
             task_map.insert(k.clone(), v.iter().map(|b| (*b).clone()).collect());
         });
 
         Self {
-            input_components: self.input_components.iter().map(|v| v.duplicate()).collect(),
-            wal_component: self.wal_component.as_ref().and_then(|v| Some(v.duplicate())),
-            other_components: self.other_components.iter().map(|v| v.duplicate()).collect(),
-            norun_components: self.norun_components.iter().map(|v| v.duplicate()).collect(),
-            parser_component: self.parser_component.as_ref().and_then(|v| Some(v.duplicate())),
-            rule_engine_component: self.rule_engine_component.as_ref().and_then(|v| Some(v.duplicate())),
-            enricher_component: self.enricher_component.as_ref().and_then(|v| Some(v.duplicate())),
-            output_component: self.output_component.as_ref().and_then(|v| Some(v.duplicate())),
-            state_storage: self.state_storage.as_ref().and_then(|v| Some(v.duplicate())),
-            alert_component: self.alert_component.as_ref().and_then(|v| Some(v.duplicate())),
+            input_components: self
+                .input_components
+                .iter()
+                .map(|v| v.duplicate())
+                .collect(),
+            wal_component: self
+                .wal_component
+                .as_ref()
+                .and_then(|v| Some(v.duplicate())),
+            other_components: self
+                .other_components
+                .iter()
+                .map(|v| v.duplicate())
+                .collect(),
+            norun_components: self
+                .norun_components
+                .iter()
+                .map(|v| v.duplicate())
+                .collect(),
+            parser_component: self
+                .parser_component
+                .as_ref()
+                .and_then(|v| Some(v.duplicate())),
+            rule_engine_component: self
+                .rule_engine_component
+                .as_ref()
+                .and_then(|v| Some(v.duplicate())),
+            enricher_component: self
+                .enricher_component
+                .as_ref()
+                .and_then(|v| Some(v.duplicate())),
+            output_component: self
+                .output_component
+                .as_ref()
+                .and_then(|v| Some(v.duplicate())),
+            state_storage: self
+                .state_storage
+                .as_ref()
+                .and_then(|v| Some(v.duplicate())),
+            alert_component: self
+                .alert_component
+                .as_ref()
+                .and_then(|v| Some(v.duplicate())),
             command_map: self.command_map.clone(),
             dataset_map: self.dataset_map.clone(),
             task_map,
@@ -134,7 +168,6 @@ impl SiemComponentStore {
             let data_name = task.data().class();
             if !self.task_map.contains_key(&data_name) {
                 self.task_map.insert(data_name, vec![task.clone()]);
-                
             } else {
                 match self.task_map.get_mut(&data_name) {
                     Some(v) => {
@@ -160,47 +193,47 @@ impl SiemComponentStore {
     pub fn _get_component_by_name(&self, name: &str) -> Option<&Box<dyn SiemComponent>> {
         if let Some(comp) = &self.alert_component {
             if comp.name() == name {
-                return Some(comp)
+                return Some(comp);
             }
         }
         if let Some(comp) = &self.enricher_component {
             if comp.name() == name {
-                return Some(comp)
+                return Some(comp);
             }
         }
         if let Some(comp) = &self.parser_component {
             if comp.name() == name {
-                return Some(comp)
+                return Some(comp);
             }
         }
         if let Some(comp) = &self.output_component {
             if comp.name() == name {
-                return Some(comp)
+                return Some(comp);
             }
         }
         if let Some(comp) = &self.wal_component {
             if comp.name() == name {
-                return Some(comp)
+                return Some(comp);
             }
         }
         if let Some(comp) = &self.rule_engine_component {
             if comp.name() == name {
-                return Some(comp)
+                return Some(comp);
             }
         }
         for comp in &self.input_components {
             if comp.name() == name {
-                return Some(comp)
+                return Some(comp);
             }
         }
         for comp in &self.other_components {
             if comp.name() == name {
-                return Some(comp)
+                return Some(comp);
             }
         }
         for comp in &self.norun_components {
             if comp.name() == name {
-                return Some(comp)
+                return Some(comp);
             }
         }
         None

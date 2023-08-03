@@ -1,54 +1,72 @@
-use std::{collections::BTreeMap, sync::{atomic::AtomicI64, Arc}};
+use usiem::prelude::{
+    counter::{Counter, CounterVec},
+    gauge::{Gauge, GaugeVec},
+    metrics::*,
+};
 
-use usiem::prelude::{ metrics::*, types::*};
-use lazy_static::lazy_static;
-
-lazy_static! {
-    pub static ref QUEUED_LOGS_PARSING : Arc<AtomicI64> = Arc::new(AtomicI64::new(0));
-    pub static ref QUEUED_LOGS_ENRICHMENT : Arc<AtomicI64> = Arc::new(AtomicI64::new(0));
-    pub static ref QUEUED_LOGS_RULE_ENGINE : Arc<AtomicI64> = Arc::new(AtomicI64::new(0));
-    pub static ref QUEUED_LOGS_INDEXING : Arc<AtomicI64> = Arc::new(AtomicI64::new(0));
-    pub static ref QUEUED_MESSAGES_FOR_KERNEL : Arc<AtomicI64> = Arc::new(AtomicI64::new(0));
-    pub static ref TOTAL_MESSAGES_PROCESSED : Arc<AtomicI64> = Arc::new(AtomicI64::new(0));
+pub fn generate_kernel_metrics() -> (Vec<SiemMetricDefinition>, KernelMetrics) {
+    let queued_logs_parsing = SiemMetricDefinition::new(
+        "queued_logs_parsing",
+        "Number of logs in the parsing queue",
+        SiemMetric::Gauge(GaugeVec::new(&[&[]])),
+    )
+    .unwrap();
+    let queued_logs_enrichment = SiemMetricDefinition::new(
+        "queued_logs_enrichment",
+        "Number of logs in the enrichment queue",
+        SiemMetric::Gauge(GaugeVec::new(&[&[]])),
+    )
+    .unwrap();
+    let queued_logs_rule_engine = SiemMetricDefinition::new(
+        "queued_logs_rule_engine",
+        "Number of logs in the rule engine queue",
+        SiemMetric::Gauge(GaugeVec::new(&[&[]])),
+    )
+    .unwrap();
+    let queued_logs_indexing = SiemMetricDefinition::new(
+        "queued_logs_indexing",
+        "Number of logs in the indexing queue",
+        SiemMetric::Gauge(GaugeVec::new(&[&[]])),
+    )
+    .unwrap();
+    let queued_messages_for_kernel = SiemMetricDefinition::new(
+        "queued_messages_for_kernel",
+        "Number of messages that the kernel has in the queue",
+        SiemMetric::Gauge(GaugeVec::new(&[&[]])),
+    )
+    .unwrap();
+    let total_messages_processed_by_kernel = SiemMetricDefinition::new(
+        "total_messages_processed_by_kernel",
+        "Total number of messages processed by the kernel",
+        SiemMetric::Counter(CounterVec::new(&[&[]])),
+    )
+    .unwrap();
+    let metrics = KernelMetrics {
+        queued_logs_parsing: get_metric(&queued_logs_parsing),
+        queued_logs_enrichment: get_metric(&queued_logs_enrichment),
+        queued_logs_rule_engine: get_metric(&queued_logs_rule_engine),
+        queued_logs_indexing: get_metric(&queued_logs_indexing),
+        queued_messages_for_kernel: get_metric(&queued_messages_for_kernel),
+        total_messages_processed_by_kernel: get_metric_counter(&total_messages_processed_by_kernel),
+    };
+    (vec![queued_logs_parsing, queued_logs_enrichment, queued_logs_rule_engine, queued_logs_indexing, queued_messages_for_kernel, total_messages_processed_by_kernel], metrics)
 }
 
-pub fn generate_kernel_metrics() -> Vec<SiemMetricDefinition> {
-    vec![
-        SiemMetricDefinition {
-            metric: SiemMetric::Gauge(QUEUED_LOGS_PARSING.clone(), 1.0),
-            name: LogString::Borrowed("queued_logs_parsing"),
-            description: LogString::Borrowed("Number of logs in the parsing queue"),
-            labels: BTreeMap::new(),
-        },
-        SiemMetricDefinition {
-            metric: SiemMetric::Gauge(QUEUED_LOGS_ENRICHMENT.clone(), 1.0),
-            name: LogString::Borrowed("queued_logs_enrichment"),
-            description: LogString::Borrowed("Number of logs in the enrichment queue"),
-            labels: BTreeMap::new(),
-        },
-        SiemMetricDefinition {
-            metric: SiemMetric::Gauge(QUEUED_LOGS_RULE_ENGINE.clone(), 1.0),
-            name: LogString::Borrowed("queued_logs_rule_engine"),
-            description: LogString::Borrowed("Number of logs in the rule engine queue"),
-            labels: BTreeMap::new(),
-        },
-        SiemMetricDefinition {
-            metric: SiemMetric::Gauge(QUEUED_LOGS_INDEXING.clone(), 1.0),
-            name: LogString::Borrowed("queued_logs_indexing"),
-            description: LogString::Borrowed("Number of logs in the indexing queue"),
-            labels: BTreeMap::new(),
-        },
-        SiemMetricDefinition {
-            metric: SiemMetric::Gauge(QUEUED_MESSAGES_FOR_KERNEL.clone(), 1.0),
-            name: LogString::Borrowed("queued_messages_for_kernel"),
-            description: LogString::Borrowed("Number of messages that the kernel has in the queue"),
-            labels: BTreeMap::new(),
-        },
-        SiemMetricDefinition {
-            metric: SiemMetric::Counter(TOTAL_MESSAGES_PROCESSED.clone()),
-            name: LogString::Borrowed("total_messages_processed_by_kernel"),
-            description: LogString::Borrowed("Total number of messages processed by the kernel"),
-            labels: BTreeMap::new(),
-        },
-    ]
+fn get_metric(definition: &SiemMetricDefinition) -> Gauge {
+    let gauge_vec: GaugeVec = definition.metric().try_into().unwrap();
+    gauge_vec.with_labels(&[]).unwrap().clone()
+}
+fn get_metric_counter(definition: &SiemMetricDefinition) -> Counter {
+    let vc: CounterVec = definition.metric().try_into().unwrap();
+    vc.with_labels(&[]).unwrap().clone()
+}
+
+#[derive(Clone)]
+pub struct KernelMetrics {
+    pub queued_logs_parsing: Gauge,
+    pub queued_logs_enrichment: Gauge,
+    pub queued_logs_rule_engine: Gauge,
+    pub queued_logs_indexing: Gauge,
+    pub queued_messages_for_kernel: Gauge,
+    pub total_messages_processed_by_kernel: Counter,
 }
