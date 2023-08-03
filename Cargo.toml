@@ -18,7 +18,7 @@ default = ["metrics"]
 metrics = []
 
 [dependencies]
-#u-siem = { version = "0"}
-u-siem = {path = "../u-siem-core"}
+u-siem = { version = "0"}
+#u-siem = {path = "../u-siem-core"}
 rand = "0.8"
 async-std = "1"
